@@ -55,6 +55,20 @@ class Config:
         # SEC rejects anonymous clients; a generic placeholder works but a real contact is requested.
         return os.environ.get("SEC_USER_AGENT") or "earnings-scanner/0.1 admin@example.com"
 
+    # Email settings live in .env (not config.toml) so addresses and the password stay out of git.
+    @property
+    def email_to(self) -> str | None:
+        return os.environ.get("EMAIL_TO") or None
+
+    @property
+    def smtp_user(self) -> str | None:
+        return os.environ.get("SMTP_USER") or None
+
+    @property
+    def smtp_password(self) -> str | None:
+        # Gmail app passwords are shown with spaces; SMTP login wants them without.
+        return (os.environ.get("SMTP_PASSWORD") or "").replace(" ", "") or None
+
 
 def load_config(path: Path | None = None) -> Config:
     load_dotenv(ROOT / ".env")

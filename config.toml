@@ -34,3 +34,12 @@ max_briefs = 40
 workers = 3
 # One extra call that ranks the day's most notable setups.
 overview = true
+
+[email]
+# Emails a digest after each run, with the full report attached as HTML.
+# Needs EMAIL_TO, SMTP_USER and SMTP_PASSWORD in .env (kept out of git).
+enabled = true
+smtp_host = "smtp.gmail.com"
+smtp_port = 465
+# Rows of the reporters table in the email body (Gmail clips messages over ~100 KB).
+digest_rows = 60

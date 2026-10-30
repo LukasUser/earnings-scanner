@@ -7,14 +7,14 @@ from pathlib import Path
 
 import anthropic
 
-from . import yahoo
+from . import mailer, yahoo
 from .brief import Briefer
 from .config import Config
 from .db import OVERVIEW, Database
 from .facts import build_facts
 from .nasdaq import NasdaqClient
 from .news import NewsClient
-from .report import render
+from .report import build, render
 from .sec import SecClient
 from .util import previous_weekday, weekdays_after
 
@@ -146,11 +146,38 @@ def run_briefs(cfg: Config, db: Database, run_date: str, all_facts: dict[str, di
     return done
 
 
+def email_enabled(cfg: Config) -> bool:
+    if not cfg.get("email", "enabled", True):
+        return False
+    if missing := mailer.missing_settings(cfg):
+        log.warning("email skipped: set %s in .env", ", ".join(missing))
+        return False
+    return True
+
+
+def email_report(cfg: Config, db: Database, run_date: str, previous_date: str | None) -> bool:
+    if not email_enabled(cfg):
+        return False
+    overview = db.briefs(run_date).get(OVERVIEW) or {}
+    standouts = [s["symbol"] for s in (overview.get("top_setups") or [])[:3]]
+    subject = f"Earnings {run_date}: {len(db.calendar(run_date))} reporting"
+    if standouts:
+        subject += f" · {', '.join(standouts)} stand out"
+    digest = build(db, run_date, previous_date, digest=True, digest_rows=cfg.get("email", "digest_rows", 60))
+    try:
+        mailer.send_report(cfg, run_date, subject, digest, build(db, run_date, previous_date))
+        return True
+    except Exception as e:
+        log.error("email failed: %s", e)
+        return False
+
+
 def run(
     cfg: Config,
     run_date: date,
     *,
     brief: bool = True,
+    email: bool = True,
     symbols: list[str] | None = None,
     limit: int | None = None,
 ) -> Path:
@@ -186,12 +213,20 @@ def run(
                 log.info("[%d/%d] %s done", i, len(targets), sym)
 
         n_briefs = run_briefs(cfg, db, rd, all_facts) if brief else 0
-        path = render(db, rd, previous.isoformat() if previous else None, cfg.reports_dir)
-        db.finish_run(run_id, "ok", companies=len(all_facts), briefs=n_briefs, report_path=str(path))
+        previous_date = previous.isoformat() if previous else None
+        path = render(db, rd, previous_date, cfg.reports_dir)
         log.info("report written to %s", path)
+        if email:
+            email_report(cfg, db, rd, previous_date)
+        db.finish_run(run_id, "ok", companies=len(all_facts), briefs=n_briefs, report_path=str(path))
         return path
     except Exception as e:
         db.finish_run(run_id, "error", error=repr(e))
+        if email and email_enabled(cfg):
+            try:
+                mailer.send_failure(cfg, run_date.isoformat(), repr(e))
+            except Exception as mail_err:
+                log.error("failure email also failed: %s", mail_err)
         raise
     finally:
         db.close()

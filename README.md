@@ -1,6 +1,6 @@
 # earnings-scanner
 
-Every weekday morning this tool reads the [Nasdaq earnings calendar](https://www.nasdaq.com/market-activity/earnings), researches each company reporting that day, stores everything in SQLite, and writes a Markdown report. If an Anthropic API key is set, it also asks Claude for a short pre-earnings brief on each company and a ranked overview of the day.
+Every weekday morning this tool reads the [Nasdaq earnings calendar](https://www.nasdaq.com/market-activity/earnings), researches each company reporting that day, stores everything in SQLite, writes a Markdown report and emails it to you. If an Anthropic API key is set, it also asks Claude for a short pre-earnings brief on each company and a ranked overview of the day.
 
 Generated from public data for research. Not investment advice.
 
@@ -19,7 +19,7 @@ Generated from public data for research. Not investment advice.
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-cp .env.example .env   # then add ANTHROPIC_API_KEY (and optionally SEC_USER_AGENT)
+cp .env.example .env   # then fill in ANTHROPIC_API_KEY, the email settings and optionally SEC_USER_AGENT
 ```
 
 ## Usage
@@ -28,12 +28,14 @@ cp .env.example .env   # then add ANTHROPIC_API_KEY (and optionally SEC_USER_AGE
 .venv/bin/python -m earnings_scanner run                      # today
 .venv/bin/python -m earnings_scanner run --date 2026-11-04    # a specific day
 .venv/bin/python -m earnings_scanner run --symbols AAPL,MSFT  # just these
-.venv/bin/python -m earnings_scanner run --limit 10 --no-brief
+.venv/bin/python -m earnings_scanner run --limit 10 --no-brief --no-email
 .venv/bin/python -m earnings_scanner report --date 2026-10-30 # re-render from the DB
+.venv/bin/python -m earnings_scanner email                    # (re)send today's report
 ```
 
 Outputs:
 - `reports/YYYY-MM-DD.md`: the daily report
+- An email with a short digest (overview, one-sentence briefs, the reporters table) and the full report attached as an HTML page. If a run fails, a short failure email is sent instead
 - `data/earnings.db`: SQLite with tables `earnings_calendar`, `snapshots` (raw payload per source per day), `facts` (normalized metrics), `news`, `filings`, `briefs`, `runs`
 - `logs/`: run logs
 
@@ -46,6 +48,18 @@ Outputs:
 launchctl kickstart gui/$(id -u)/com.earnings-scanner.daily   # run now
 ./scripts/install_launchd.sh --uninstall
 ```
+
+## Email
+
+Sent through Gmail SMTP. Set these in `.env`, which is git-ignored, so neither address nor password ends up in the repo:
+
+```
+EMAIL_TO=you@example.com
+SMTP_USER=you@gmail.com          # the Gmail account that sends
+SMTP_PASSWORD=abcd efgh ijkl mnop # an app password, not your Google password
+```
+
+Gmail needs an **app password**: turn on 2-Step Verification, then go to Google Account → Security → App passwords (or https://myaccount.google.com/apppasswords) and create one. Test it with `.venv/bin/python -m earnings_scanner email`. To turn email off, set `[email] enabled = false` in `config.toml`.
 
 ## Configuration
 

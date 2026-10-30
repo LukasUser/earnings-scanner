@@ -1,5 +1,6 @@
 anthropic>=2.3,<3
 lxml>=6.0
+markdown>=3.7
 pandas>=3.0
 requests>=2.32
 yfinance>=1.7,<2

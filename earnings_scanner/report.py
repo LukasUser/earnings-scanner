@@ -1,4 +1,4 @@
-"""Render the daily Markdown report from what's stored in the database."""
+"""Render the daily Markdown report (and a short email digest) from what's stored in the database."""
 
 from __future__ import annotations
 
@@ -18,7 +18,8 @@ def _cell(s: str) -> str:
     return s.replace("|", "\\|").replace("\n", " ")
 
 
-def render(db: Database, run_date: str, previous_date: str | None, out_dir: Path) -> Path:
+def build(db: Database, run_date: str, previous_date: str | None, *, digest: bool = False, digest_rows: int = 60) -> str:
+    """The full report, or with digest=True a short version for email: overview, briefs and the summary table."""
     facts = db.facts(run_date)
     briefs = db.briefs(run_date)
     calendar = db.calendar(run_date)
@@ -57,17 +58,34 @@ def render(db: Database, run_date: str, previous_date: str | None, out_dir: Path
             lines.append("")
 
     ordered = sorted(facts.values(), key=lambda f: f.get("market_cap") or 0, reverse=True)
-    if ordered:
+
+    if digest:
+        briefed = [f for f in ordered if f["symbol"] in briefs and "error" not in briefs[f["symbol"]]]
+        if briefed:
+            lines += ["## Briefs", ""]
+            for f in briefed:
+                b = briefs[f["symbol"]]
+                lines.append(
+                    f"- **{f['symbol']}** ({TIME_LABEL.get(f['time_of_day'], '?')}, {fmt_money(f.get('market_cap'))}) "
+                    f"{b['one_line']} _({b['sentiment']}, bar: {b['expectations_bar']})_"
+                )
+            lines.append("")
+
+    table = ordered[:digest_rows] if digest else ordered
+    if table:
         lines += ["## Today's reporters", ""]
+        if len(table) < len(ordered):
+            lines += [f"Largest {len(table)} of {len(ordered)}; the attached full report has them all.", ""]
         lines += [
             "| Symbol | When | Mkt cap | EPS est. (#) | Rev. 4w ↑/↓ | Implied move | Avg past move | "
             "Short % float | Rating | Target upside | 1m return | News |",
             "|---|---|---|---|---|---|---|---|---|---|---|---|",
         ]
-        for f in ordered:
+        for f in table:
             n_est = f"{int(f['num_estimates'])}" if f.get("num_estimates") else "–"
+            sym = f["symbol"] if digest else f"[{f['symbol']}](#{f['symbol'].lower()})"
             lines.append(
-                f"| [{f['symbol']}](#{f['symbol'].lower()}) | {TIME_LABEL.get(f['time_of_day'], '?')} | "
+                f"| {sym} | {TIME_LABEL.get(f['time_of_day'], '?')} | "
                 f"{fmt_money(f.get('market_cap'))} | {fmt_num(f.get('eps_forecast'))} ({n_est}) | "
                 f"{f.get('eps_revisions_up_4w') if f.get('eps_revisions_up_4w') is not None else '–'}/"
                 f"{f.get('eps_revisions_down_4w') if f.get('eps_revisions_down_4w') is not None else '–'} | "
@@ -76,6 +94,11 @@ def render(db: Database, run_date: str, previous_date: str | None, out_dir: Path
                 f"{fmt_pct(f.get('target_upside'))} | {fmt_pct(f.get('ret_1m'))} | {f.get('news_count', 0)} |"
             )
         lines.append("")
+
+    if digest:
+        if ordered:
+            lines.append("_Per-company detail (expectations, price, positioning, analysts, filings, headlines) is in the attached full report._")
+        return "\n".join(lines)
 
     for f in ordered:
         sym = f["symbol"]
@@ -129,13 +152,18 @@ def render(db: Database, run_date: str, previous_date: str | None, out_dir: Path
                 ]
 
         if f.get("headlines"):
-            lines.append("<details><summary>Headlines</summary>")
+            # markdown="1" lets the HTML email renderer process the list inside the raw <details> block.
+            lines.append('<details markdown="1"><summary>Headlines</summary>')
             lines.append("")
             for h in f["headlines"][:8]:
                 when = (h.get("published_at") or "")[:10]
                 lines.append(f"- {when} [{h['title']}]({h['url']}) — {h.get('source') or ''}")
             lines += ["", "</details>", ""]
 
+    return "\n".join(lines)
+
+
+def render(db: Database, run_date: str, previous_date: str | None, out_dir: Path) -> Path:
     path = out_dir / f"{run_date}.md"
-    path.write_text("\n".join(lines))
+    path.write_text(build(db, run_date, previous_date))
     return path
