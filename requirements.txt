@@ -1,0 +1,5 @@
+anthropic>=2.3,<3
+lxml>=6.0
+pandas>=3.0
+requests>=2.32
+yfinance>=1.7,<2

@@ -1,0 +1,36 @@
+# Earnings scanner configuration. Times are local to this Mac.
+
+[schedule]
+# Used by scripts/install_launchd.sh. Runs Monday-Friday.
+hour = 7
+minute = 0
+
+[calendar]
+# Also store the upcoming N weekdays of the Nasdaq calendar (cheap: one request per day).
+lookahead_days = 5
+# Re-fetch the previous session's calendar to capture actual EPS and % surprise.
+include_previous_day = true
+
+[enrich]
+# Deep research runs for companies reporting today. Peak days list 300+ names,
+# most of them micro caps, so skip anything below this market cap.
+min_market_cap = 300_000_000
+max_companies = 150
+workers = 4
+news_days = 7
+sec_filing_days = 45
+# Also research companies reporting on the next weekday (e.g. tomorrow's pre-market).
+include_next_day = false
+
+[brief]
+# Needs ANTHROPIC_API_KEY in .env.
+enabled = true
+model = "claude-opus-5-5"
+effort = "medium"
+# Only brief companies at or above this market cap (keeps cost down on busy days).
+min_market_cap = 2_000_000_000
+# At most this many briefs per day, largest companies first (~$0.05 each on Opus).
+max_briefs = 40
+workers = 3
+# One extra call that ranks the day's most notable setups.
+overview = true
