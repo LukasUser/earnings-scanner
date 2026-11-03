@@ -155,14 +155,19 @@ def email_enabled(cfg: Config) -> bool:
     return True
 
 
-def email_report(cfg: Config, db: Database, run_date: str, previous_date: str | None) -> bool:
-    if not email_enabled(cfg):
-        return False
+def email_subject(db: Database, run_date: str) -> str:
     overview = db.briefs(run_date).get(OVERVIEW) or {}
     standouts = [s["symbol"] for s in (overview.get("top_setups") or [])[:3]]
     subject = f"Earnings {run_date}: {len(db.calendar(run_date))} reporting"
     if standouts:
         subject += f" · {', '.join(standouts)} stand out"
+    return subject
+
+
+def email_report(cfg: Config, db: Database, run_date: str, previous_date: str | None) -> bool:
+    if not email_enabled(cfg):
+        return False
+    subject = email_subject(db, run_date)
     digest = build(db, run_date, previous_date, digest=True, digest_rows=cfg.get("email", "digest_rows", 60))
     try:
         mailer.send_report(cfg, run_date, subject, digest, build(db, run_date, previous_date))
