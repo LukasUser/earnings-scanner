@@ -4,6 +4,10 @@
 # Used by scripts/install_launchd.sh. Runs Monday-Friday.
 hour = 7
 minute = 0
+# If research is still running this close to send_by (e.g. the Mac slept mid-run), stop, skip the
+# smallest remaining companies and send what's done. Leaves brief_minutes for the briefs and the email.
+send_by = "09:00"
+brief_minutes = 10
 
 [calendar]
 # Also store the upcoming N weekdays of the Nasdaq calendar (cheap: one request per day).
@@ -16,7 +20,7 @@ include_previous_day = true
 # most of them micro caps, so skip anything below this market cap.
 min_market_cap = 300_000_000
 max_companies = 150
-workers = 4
+workers = 6
 news_days = 7
 sec_filing_days = 45
 # Also research companies reporting on the next weekday (e.g. tomorrow's pre-market).

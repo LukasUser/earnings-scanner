@@ -18,7 +18,17 @@ def _cell(s: str) -> str:
     return s.replace("|", "\\|").replace("\n", " ")
 
 
-def build(db: Database, run_date: str, previous_date: str | None, *, digest: bool = False, digest_rows: int = 60) -> str:
+def _surprise(actual: float, estimate: float) -> str:
+    # A % of a tiny or negative estimate isn't meaningful (a -$0.23 estimate beaten by $2.86 is "+1243%").
+    if estimate < 0.10:
+        return "n/m"
+    return f"{(actual - estimate) / estimate * 100:+.1f}%"
+
+
+def build(
+    db: Database, run_date: str, previous_date: str | None, *, digest: bool = False, digest_rows: int = 60,
+    note: str | None = None,
+) -> str:
     """The full report, or with digest=True a short version for email: overview, briefs and the summary table."""
     facts = db.facts(run_date)
     briefs = db.briefs(run_date)
@@ -29,6 +39,8 @@ def build(db: Database, run_date: str, previous_date: str | None, *, digest: boo
         f"{len([b for b in briefs if b != OVERVIEW])} AI briefs."
     )
     lines.append("")
+    if note:
+        lines += [f"**Note:** {note}", ""]
     lines.append("> Generated automatically from public data. Not investment advice.")
     lines.append("")
 
@@ -41,21 +53,20 @@ def build(db: Database, run_date: str, previous_date: str | None, *, digest: boo
             lines.append("")
 
     if previous_date:
-        reported = [r for r in db.calendar(previous_date) if r["surprise_pct"] is not None and (r["market_cap"] or 0) >= 1e9]
+        reported = [r for r in db.calendar(previous_date) if r["eps_actual"] is not None and r["eps_forecast"] is not None]
+        reported.sort(key=lambda r: r["market_cap"] or 0, reverse=True)
         if reported:
-            reported.sort(key=lambda r: r["surprise_pct"])
-            misses, beats = reported[:5], reported[::-1][:5]
-            lines += [f"## Last session's results ({previous_date}, market cap ≥ $1B)", ""]
-            lines += ["| | Symbol | Company | EPS | Est. | Surprise |", "|---|---|---|---|---|---|"]
-            for label, group in (("Beat", beats), ("Miss", misses)):
-                for r in group:
-                    if (label == "Beat") != (r["surprise_pct"] > 0):
-                        continue
-                    lines.append(
-                        f"| {label} | {r['symbol']} | {_cell(r['name'])} | {fmt_num(r['eps_actual'])} | "
-                        f"{fmt_num(r['eps_forecast'])} | {r['surprise_pct']:+.1f}% |"
-                    )
-            lines.append("")
+            lines += [f"## Last session's results ({previous_date}, largest reporters)", ""]
+            lines += ["| | Symbol | Company | Mkt cap | EPS | Est. | Surprise |", "|---|---|---|---|---|---|---|"]
+            for r in reported[:12]:
+                diff = r["eps_actual"] - r["eps_forecast"]
+                label = "In line" if abs(diff) < 0.005 else "Beat" if diff > 0 else "Miss"
+                lines.append(
+                    f"| {label} | {r['symbol']} | {_cell(r['name'])} | {fmt_money(r['market_cap'])} | "
+                    f"{fmt_num(r['eps_actual'])} | {fmt_num(r['eps_forecast'])} | {_surprise(r['eps_actual'], r['eps_forecast'])} |"
+                )
+            lines += ["", "_Surprise is computed from the EPS and estimate shown; n/m where the estimate is below $0.10 "
+                      "or negative. Nasdaq's EPS can be GAAP where the estimate is adjusted, so check big misses._", ""]
 
     ordered = sorted(facts.values(), key=lambda f: f.get("market_cap") or 0, reverse=True)
 
@@ -163,7 +174,7 @@ def build(db: Database, run_date: str, previous_date: str | None, *, digest: boo
     return "\n".join(lines)
 
 
-def render(db: Database, run_date: str, previous_date: str | None, out_dir: Path) -> Path:
+def render(db: Database, run_date: str, previous_date: str | None, out_dir: Path, note: str | None = None) -> Path:
     path = out_dir / f"{run_date}.md"
-    path.write_text(build(db, run_date, previous_date))
+    path.write_text(build(db, run_date, previous_date, note=note))
     return path

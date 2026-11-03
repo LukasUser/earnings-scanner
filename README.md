@@ -38,9 +38,9 @@ Claude reads everything collected for a company and writes the one thing that ma
 
 ```mermaid
 flowchart TB
-    A(["⏰ launchd · weekdays 07:00"]) --> B["📅 Nasdaq earnings calendar<br/>today + next 5 days"]
+    A(["⏰ launchd · weekdays 07:00"]) --> B["📅 Nasdaq earnings calendar<br/>today + last session's results"]
     B -- "market cap ≥ $300M, largest 150" --> D
-    subgraph D["🔎 Research each company, 4 at a time"]
+    subgraph D["🔎 Research each company, 6 at a time"]
         direction LR
         D1["Nasdaq<br/>estimates · ratings<br/>short interest"]
         D2["Yahoo Finance<br/>options · past moves<br/>insiders"]
@@ -52,8 +52,8 @@ flowchart TB
     F --> G(["📧 Email digest + full report attached"])
 ```
 
-1. **Calendar.** Nasdaq's calendar for today and the next five weekdays, plus the previous session again to capture actual EPS and the surprise.
-2. **Research.** Each company above $300M market cap (largest 150 on busy days) is looked up across four free sources. Each source can fail on its own without stopping the run.
+1. **Calendar.** Nasdaq's calendar for today, plus the previous session again to capture actual EPS and the surprise. The next five weekdays are stored after the email goes out.
+2. **Research.** Each company above $300M market cap (largest 150 on busy days) is looked up across four free sources, 6 at a time. Each source can fail on its own without stopping the run, and if the run is late it stops early so the email still arrives by 09:00.
 3. **Store.** Raw payloads, normalized metrics, headlines and filings go into `data/earnings.db`.
 4. **Brief.** Claude writes a one-sentence brief for the 40 largest companies above $2B and a short overview ranking the day's standout setups.
 5. **Deliver.** The report is written to `reports/YYYY-MM-DD.md` and emailed. If a run fails, a short failure email goes out instead.
@@ -111,6 +111,14 @@ That's it: the scanner now runs every weekday at 07:00. If the Mac is asleep the
 launchctl kickstart gui/$(id -u)/com.earnings-scanner.daily   # run now
 ./scripts/install_launchd.sh --uninstall
 ```
+
+**Keeping the Mac awake.** A full run takes about 15 minutes, and the job holds a `caffeinate` assertion so the Mac doesn't sleep partway through. A MacBook that is closed *and* on battery sleeps regardless and only runs the job in short bursts, which can push the email past the open. So either leave it plugged in overnight (the run can then finish with the lid closed) or leave the lid open, and wake it on schedule with:
+
+```bash
+sudo pmset repeat wakeorpoweron MTWRF 06:58:00
+```
+
+As a safety net, `[schedule] send_by` (default 09:00) stops research early if the run is late, skips the smallest remaining companies, and sends what it has with a note saying so.
 
 </details>
 

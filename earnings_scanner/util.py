@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+import socket
 import threading
 import time
 from datetime import date, datetime, timedelta
@@ -29,6 +30,19 @@ def make_session(headers: dict[str, str]) -> requests.Session:
     session.mount("https://", adapter)
     session.headers.update(headers)
     return session
+
+
+def wait_for_network(host: str, timeout: float = 180, interval: float = 5) -> bool:
+    """Wait until `host` resolves. Returns False (and lets the caller carry on) if it never does."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            socket.getaddrinfo(host, 443)
+            return True
+        except OSError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(interval)
 
 
 class RateLimiter:

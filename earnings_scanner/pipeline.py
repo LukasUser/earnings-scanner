@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import anthropic
@@ -16,14 +16,21 @@ from .nasdaq import NasdaqClient
 from .news import NewsClient
 from .report import build, render
 from .sec import SecClient
-from .util import previous_weekday, weekdays_after
+from .util import previous_weekday, wait_for_network, weekdays_after
 
 log = logging.getLogger(__name__)
 
 
+def research_days(cfg: Config, run_date: date) -> list[date]:
+    days = [run_date]
+    if cfg.get("enrich", "include_next_day", False):
+        days += weekdays_after(run_date, 1)
+    return days
+
+
 def fetch_calendars(cfg: Config, db: Database, nasdaq: NasdaqClient, run_date: date) -> date | None:
-    """Store today's, the upcoming, and the previous session's calendars. Returns the previous session date."""
-    days = [run_date, *weekdays_after(run_date, cfg.get("calendar", "lookahead_days", 5))]
+    """Store the calendars the report needs: the previous session and the days being researched.
+    Returns the previous session date. The rest of the lookahead waits until after the email (fetch_lookahead)."""
     previous = None
     if cfg.get("calendar", "include_previous_day", True):
         # Walk back past market holidays (empty calendars) for up to a week.
@@ -40,7 +47,7 @@ def fetch_calendars(cfg: Config, db: Database, nasdaq: NasdaqClient, run_date: d
                 previous = d
                 log.info("calendar %s (previous session): %d rows", d, len(rows))
                 break
-    for d in days:
+    for d in research_days(cfg, run_date):
         try:
             rows = nasdaq.earnings_calendar(d)
         except Exception as e:
@@ -53,11 +60,33 @@ def fetch_calendars(cfg: Config, db: Database, nasdaq: NasdaqClient, run_date: d
     return previous
 
 
+def fetch_lookahead(cfg: Config, db: Database, nasdaq: NasdaqClient, run_date: date) -> None:
+    """Store the upcoming weekdays' calendars. Nothing in today's report depends on them."""
+    done = set(research_days(cfg, run_date))
+    for d in weekdays_after(run_date, cfg.get("calendar", "lookahead_days", 5)):
+        if d in done:
+            continue
+        try:
+            rows = nasdaq.earnings_calendar(d)
+        except Exception as e:
+            log.warning("calendar %s failed: %s", d, e)
+            continue
+        db.upsert_calendar(rows)
+        log.info("calendar %s: %d rows", d, len(rows))
+
+
+def research_deadline(cfg: Config, run_date: date) -> datetime | None:
+    """When to stop researching so the email still goes out by [schedule] send_by. Only applies to today's run."""
+    send_by = cfg.get("schedule", "send_by")
+    if not send_by or run_date != date.today():
+        return None
+    hour, minute = (int(x) for x in send_by.split(":"))
+    margin = timedelta(minutes=cfg.get("schedule", "brief_minutes", 10))
+    return datetime.combine(run_date, time(hour, minute)) - margin
+
+
 def select_targets(cfg: Config, db: Database, run_date: date, symbols: list[str] | None, limit: int | None) -> list[dict]:
-    dates = [run_date]
-    if cfg.get("enrich", "include_next_day", False):
-        dates += weekdays_after(run_date, 1)
-    rows = [r for d in dates for r in db.calendar(d.isoformat())]
+    rows = [r for d in research_days(cfg, run_date) for r in db.calendar(d.isoformat())]
     if symbols:
         wanted = {s.upper() for s in symbols}
         rows = [r for r in rows if r["symbol"] in wanted]
@@ -164,13 +193,13 @@ def email_subject(db: Database, run_date: str) -> str:
     return subject
 
 
-def email_report(cfg: Config, db: Database, run_date: str, previous_date: str | None) -> bool:
+def email_report(cfg: Config, db: Database, run_date: str, previous_date: str | None, note: str | None = None) -> bool:
     if not email_enabled(cfg):
         return False
     subject = email_subject(db, run_date)
-    digest = build(db, run_date, previous_date, digest=True, digest_rows=cfg.get("email", "digest_rows", 60))
+    digest = build(db, run_date, previous_date, digest=True, digest_rows=cfg.get("email", "digest_rows", 60), note=note)
     try:
-        mailer.send_report(cfg, run_date, subject, digest, build(db, run_date, previous_date))
+        mailer.send_report(cfg, run_date, subject, digest, build(db, run_date, previous_date, note=note))
         return True
     except Exception as e:
         log.error("email failed: %s", e)
@@ -189,19 +218,31 @@ def run(
     db = Database(cfg.db_path)
     run_id = db.start_run(run_date.isoformat())
     try:
+        # A Mac that just woke for this job can take a moment to get its network back.
+        wait_for_network("api.nasdaq.com")
         nasdaq = NasdaqClient()
         previous = fetch_calendars(cfg, db, nasdaq, run_date)
 
         targets = select_targets(cfg, db, run_date, symbols, limit)
-        log.info("researching %d companies", len(targets))
+        deadline = research_deadline(cfg, run_date)
+        log.info("researching %d companies%s", len(targets), f" (until {deadline:%H:%M})" if deadline else "")
         sec = SecClient(cfg.sec_user_agent, cfg.cache_dir)
         news = NewsClient()
         rd = run_date.isoformat()
         all_facts: dict[str, dict] = {}
+        note = None
         with ThreadPoolExecutor(max_workers=cfg.get("enrich", "workers", 4)) as pool:
             futures = {pool.submit(research_company, cfg, cal, nasdaq, sec, news): cal for cal in targets}
             for i, fut in enumerate(as_completed(futures), 1):
                 sym = futures[fut]["symbol"]
+                if fut.cancelled():
+                    continue
+                # Targets are queued largest first, so stopping early drops the smallest companies.
+                if deadline and note is None and datetime.now() >= deadline:
+                    skipped = sum(f.cancel() for f in futures)
+                    note = (f"Research stopped at {datetime.now():%H:%M} to send this before {cfg.get('schedule', 'send_by')}; "
+                            f"{skipped} smaller companies were skipped.")
+                    log.warning(note)
                 try:
                     res = fut.result()
                 except Exception as e:
@@ -219,11 +260,13 @@ def run(
 
         n_briefs = run_briefs(cfg, db, rd, all_facts) if brief else 0
         previous_date = previous.isoformat() if previous else None
-        path = render(db, rd, previous_date, cfg.reports_dir)
+        path = render(db, rd, previous_date, cfg.reports_dir, note=note)
         log.info("report written to %s", path)
         if email:
-            email_report(cfg, db, rd, previous_date)
+            email_report(cfg, db, rd, previous_date, note=note)
         db.finish_run(run_id, "ok", companies=len(all_facts), briefs=n_briefs, report_path=str(path))
+        if not symbols:
+            fetch_lookahead(cfg, db, nasdaq, run_date)
         return path
     except Exception as e:
         db.finish_run(run_id, "error", error=repr(e))

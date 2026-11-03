@@ -67,7 +67,7 @@ class NasdaqClient:
 
     def _get(self, path: str, params: dict | None = None) -> Any:
         self.limiter.wait()
-        resp = self.session.get(BASE + path, params=params, timeout=20)
+        resp = self.session.get(BASE + path, params=params, timeout=10)
         resp.raise_for_status()
         return resp.json().get("data")
 
