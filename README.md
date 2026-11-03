@@ -37,21 +37,19 @@ Claude reads everything collected for a company and writes the one thing that ma
 ## How it works
 
 ```mermaid
-flowchart LR
-    A(["⏰ launchd<br/>weekdays 07:00"]) --> B["📅 Nasdaq calendar<br/>today + next 5 days"]
-    B --> C{"market cap<br/>≥ $300M?"}
-    C -- "largest 150" --> D
-    subgraph D["🔎 Research, 4 at a time"]
-        direction TB
-        D1["Nasdaq<br/>estimates · ratings · short interest"]
-        D2["Yahoo Finance<br/>options · past moves · insiders"]
-        D3["SEC EDGAR<br/>8-K flags · Form 4"]
-        D4["News RSS<br/>7 days of headlines"]
+flowchart TB
+    A(["⏰ launchd · weekdays 07:00"]) --> B["📅 Nasdaq earnings calendar<br/>today + next 5 days"]
+    B -- "market cap ≥ $300M, largest 150" --> D
+    subgraph D["🔎 Research each company, 4 at a time"]
+        direction LR
+        D1["Nasdaq<br/>estimates · ratings<br/>short interest"]
+        D2["Yahoo Finance<br/>options · past moves<br/>insiders"]
+        D3["SEC EDGAR<br/>8-K flags<br/>Form 4"]
+        D4["News RSS<br/>7 days of<br/>headlines"]
     end
     D --> E[("🗄 SQLite")]
-    E --> F["🤖 Claude<br/>40 one-sentence briefs<br/>+ daily overview"]
-    F --> G["📝 Markdown report"]
-    G --> H(["📧 Email digest<br/>+ full report attached"])
+    E --> F["🤖 Claude: 40 one-sentence briefs + daily overview"]
+    F --> G(["📧 Email digest + full report attached"])
 ```
 
 1. **Calendar.** Nasdaq's calendar for today and the next five weekdays, plus the previous session again to capture actual EPS and the surprise.
